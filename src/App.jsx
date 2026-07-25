@@ -28,7 +28,7 @@ function App() {
     name: 'Hex Miner',
     description: 'Tap to mine hex tiles on Unicity testnet',
     url: window.location.origin,
-    network: 'testnet',
+    network: 'testnet2',
   },
 });
 
