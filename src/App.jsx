@@ -12,10 +12,10 @@ function App() {
     setStatus('Opening wallet...');
     try {
       const popup = window.open(
-        `${WALLET_URL}/connect`,
-        'SphereConnect',
-        'width=420,height=640'
-      );
+  `${WALLET_URL}/connect?origin=${encodeURIComponent(window.location.origin)}`,
+  'SphereConnect',
+  'width=420,height=640'
+);
 
       const transport = PostMessageTransport.forClient({
         target: popup,
