@@ -23,13 +23,14 @@ function App() {
       });
 
       const client = new ConnectClient({
-        transport,
-        dapp: {
-          name: 'Hex Miner',
-          description: 'Tap to mine hex tiles on Unicity testnet',
-          url: window.location.origin,
-        },
-      });
+  transport,
+  dapp: {
+    name: 'Hex Miner',
+    description: 'Tap to mine hex tiles on Unicity testnet',
+    url: window.location.origin,
+    network: 'testnet',
+  },
+});
 
       setStatus('Waiting for approval...');
       const { identity } = await client.connect();
