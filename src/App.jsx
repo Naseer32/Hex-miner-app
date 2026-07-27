@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { autoConnect } from '@unicitylabs/sphere-sdk/connect/browser';
 import { SPHERE_NETWORKS } from '@unicitylabs/sphere-sdk/connect';
-import { getCoinIdBySymbol } from '@unicitylabs/sphere-sdk';
 
 const WALLET_URL = 'https://sphere.unicity.network';
-const MINT_AMOUNT = '1000000';
+const UCT_COIN_ID = 'f581d30f593e4b369d684a4563b5246f07b1d265f7178a2c0a82b81f39c24dc0';
+const UCT_DECIMALS = 18;
+const MINT_AMOUNT = '1000000000000000000'; // 1 UCT per tap (18 decimals)
 
 function App() {
   const [status, setStatus] = useState('Not connected');
@@ -12,7 +13,6 @@ function App() {
   const [client, setClient] = useState(null);
   const [taps, setTaps] = useState(0);
   const [balance, setBalance] = useState(null);
-  const [debug, setDebug] = useState('');
   const [mining, setMining] = useState(false);
 
   async function connectWallet() {
@@ -42,9 +42,10 @@ function App() {
   async function refreshBalance(activeClient) {
     try {
       const bal = await (activeClient ?? client).query('sphere_getBalance');
-      setDebug('Balance raw: ' + JSON.stringify(bal));
+      const uct = bal.find((b) => b.coinId === UCT_COIN_ID);
+      setBalance(uct ? uct.totalAmount : '0');
     } catch (err) {
-      setDebug('Balance query error: ' + err.message);
+      console.error('Balance fetch failed', err);
     }
   }
 
@@ -52,11 +53,10 @@ function App() {
     if (!client || mining) return;
     setMining(true);
     try {
-      const coinId = getCoinIdBySymbol('UCT');
-      setDebug('coinId = ' + JSON.stringify(coinId) + ' (type: ' + typeof coinId + ')');
-      await client.intent('mint', { coinId, amount: MINT_AMOUNT });
+      await client.intent('mint', { coinId: UCT_COIN_ID, amount: MINT_AMOUNT });
       setTaps((t) => t + 1);
       await refreshBalance(client);
+      setStatus('Connected ✅');
     } catch (err) {
       console.error(err);
       setStatus('Mint failed: ' + err.message);
@@ -64,6 +64,9 @@ function App() {
       setMining(false);
     }
   }
+
+  const uctDisplay =
+    balance !== null ? (Number(balance) / 10 ** UCT_DECIMALS).toFixed(4) + ' UCT' : '...';
 
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center' }}>
@@ -77,6 +80,7 @@ function App() {
       ) : (
         <>
           <p style={{ fontSize: 12, wordBreak: 'break-all', color: '#666' }}>{address}</p>
+          <p style={{ fontSize: 20 }}>Balance: {uctDisplay}</p>
           <p>Taps mined: {taps}</p>
 
           <div
@@ -91,10 +95,6 @@ function App() {
           >
             {mining ? 'Mining...' : 'TAP'}
           </div>
-
-          <pre style={{ fontSize: 11, textAlign: 'left', background: '#eee', padding: 10, whiteSpace: 'pre-wrap' }}>
-            {debug}
-          </pre>
         </>
       )}
     </div>
