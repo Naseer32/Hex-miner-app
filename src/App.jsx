@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { autoConnect } from '@unicitylabs/sphere-sdk/connect/browser';
 import { SPHERE_NETWORKS } from '@unicitylabs/sphere-sdk/connect';
 
@@ -30,9 +30,7 @@ function playDing() {
     gain.connect(ctx.destination);
     osc.start();
     osc.stop(ctx.currentTime + 0.25);
-  } catch (e) {
-    // audio not available — ignore
-  }
+  } catch (e) {}
 }
 
 function App() {
@@ -41,10 +39,11 @@ function App() {
   const [client, setClient] = useState(null);
   const [taps, setTaps] = useState(0);
   const [balance, setBalance] = useState(null);
-  const [tileState, setTileState] = useState({}); // { [id]: 'mining' | 'cooldown' | undefined }
+  const [tileState, setTileState] = useState({});
   const [burstTile, setBurstTile] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const cooldownTimers = useRef({});
+  const clientRef = useRef(null);
 
   async function connectWallet() {
     setStatus('Connecting...');
@@ -60,10 +59,29 @@ function App() {
         permissions: ['identity:read', 'balance:read', 'mint:request'],
       });
 
+      clientRef.current = result.client;
       setClient(result.client);
       setAddress(result.connection.identity.directAddress);
       setStatus('Connected ✅');
       refreshBalance(result.client);
+
+      // React to the wallet locking — the connection is no longer usable
+      result.client.on('wallet:locked', () => {
+        setStatus('Wallet locked — please reconnect');
+        setClient(null);
+        clientRef.current = null;
+        setAddress(null);
+        setBalance(null);
+      });
+
+      // React to the user switching accounts inside the wallet
+      result.client.on('identity:changed', (newIdentity) => {
+        setAddress(newIdentity.directAddress);
+        setStatus('Account switched ✅');
+        setTaps(0);
+        setLeaderboard([]);
+        refreshBalance(result.client);
+      });
     } catch (err) {
       console.error(err);
       setStatus('Failed: ' + err.message);
@@ -72,7 +90,7 @@ function App() {
 
   async function refreshBalance(activeClient) {
     try {
-      const bal = await (activeClient ?? client).query('sphere_getBalance');
+      const bal = await (activeClient ?? clientRef.current).query('sphere_getBalance');
       const uct = bal.find((b) => b.coinId === UCT_COIN_ID);
       setBalance(uct ? uct.totalAmount : '0');
     } catch (err) {
@@ -111,6 +129,12 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    return () => {
+      Object.values(cooldownTimers.current).forEach(clearTimeout);
+    };
+  }, []);
+
   const uctDisplay =
     balance !== null ? (Number(balance) / 10 ** UCT_DECIMALS).toFixed(4) + ' UCT' : '...';
 
@@ -136,47 +160,19 @@ function App() {
             {TILES.map((tile) => {
               const state = tileState[tile.id];
               return (
-                <div
-                  key={tile.id}
-                  style={{
-                    position: 'relative',
-                    width: 90,
-                    height: 104,
-                    marginTop: tile.offset ? 52 : 0,
-                  }}
-                >
+                <div key={tile.id} style={{ position: 'relative', width: 90, height: 104, marginTop: tile.offset ? 52 : 0 }}>
                   {burstTile === tile.id && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: -14,
-                        borderRadius: '50%',
-                        background: 'radial-gradient(circle, rgba(245,158,11,0.5) 0%, transparent 70%)',
-                        animation: 'pulse 0.3s ease-out',
-                        pointerEvents: 'none',
-                      }}
-                    />
+                    <div style={{ position: 'absolute', inset: -14, borderRadius: '50%', background: 'radial-gradient(circle, rgba(245,158,11,0.5) 0%, transparent 70%)', animation: 'pulse 0.3s ease-out', pointerEvents: 'none' }} />
                   )}
                   <div
                     onClick={() => mineTap(tile.id)}
                     style={{
-                      width: 90,
-                      height: 104,
+                      width: 90, height: 104,
                       clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
-                      background:
-                        state === 'mining'
-                          ? '#d97706'
-                          : state === 'cooldown'
-                          ? '#7c5a1e'
-                          : 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: state ? 'not-allowed' : 'pointer',
-                      userSelect: 'none',
-                      fontWeight: 'bold',
-                      color: '#fff',
-                      fontSize: 12,
+                      background: state === 'mining' ? '#d97706' : state === 'cooldown' ? '#7c5a1e' : 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: state ? 'not-allowed' : 'pointer', userSelect: 'none',
+                      fontWeight: 'bold', color: '#fff', fontSize: 12,
                       transition: 'transform 0.1s, background 0.2s',
                       transform: state === 'mining' ? 'scale(0.92)' : 'scale(1)',
                     }}
