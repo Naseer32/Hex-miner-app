@@ -4,7 +4,7 @@ import { SPHERE_NETWORKS } from '@unicitylabs/sphere-sdk/connect';
 import { getCoinIdBySymbol } from '@unicitylabs/sphere-sdk';
 
 const WALLET_URL = 'https://sphere.unicity.network';
-const MINT_AMOUNT = '1000000'; // 1 UCT per tap (UCT has 6 decimals)
+const MINT_AMOUNT = '1000000';
 
 function App() {
   const [status, setStatus] = useState('Not connected');
@@ -12,6 +12,7 @@ function App() {
   const [client, setClient] = useState(null);
   const [taps, setTaps] = useState(0);
   const [balance, setBalance] = useState(null);
+  const [debug, setDebug] = useState('');
   const [mining, setMining] = useState(false);
 
   async function connectWallet() {
@@ -30,12 +31,6 @@ function App() {
 
       setClient(result.client);
       setAddress(result.connection.identity.directAddress);
-      setStatus('Connected! Signing...');
-
-      await result.client.intent('sign_message', {
-        message: `Sign in to Hex Miner at ${new Date().toISOString()}`,
-      });
-
       setStatus('Connected ✅');
       refreshBalance(result.client);
     } catch (err) {
@@ -47,10 +42,9 @@ function App() {
   async function refreshBalance(activeClient) {
     try {
       const bal = await (activeClient ?? client).query('sphere_getBalance');
-      const uct = bal.find((b) => b.symbol === 'UCT');
-      setBalance(uct ? uct.amount : '0');
+      setDebug('Balance raw: ' + JSON.stringify(bal));
     } catch (err) {
-      console.error('Balance fetch failed', err);
+      setDebug('Balance query error: ' + err.message);
     }
   }
 
@@ -59,6 +53,7 @@ function App() {
     setMining(true);
     try {
       const coinId = getCoinIdBySymbol('UCT');
+      setDebug('coinId = ' + JSON.stringify(coinId) + ' (type: ' + typeof coinId + ')');
       await client.intent('mint', { coinId, amount: MINT_AMOUNT });
       setTaps((t) => t + 1);
       await refreshBalance(client);
@@ -69,8 +64,6 @@ function App() {
       setMining(false);
     }
   }
-
-  const uctDisplay = balance !== null ? (Number(balance) / 1_000_000).toFixed(4) + ' UCT' : '...';
 
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center' }}>
@@ -84,33 +77,24 @@ function App() {
       ) : (
         <>
           <p style={{ fontSize: 12, wordBreak: 'break-all', color: '#666' }}>{address}</p>
-          <p style={{ fontSize: 20 }}>Balance: {uctDisplay}</p>
           <p>Taps mined: {taps}</p>
 
           <div
             onClick={mineTap}
             style={{
-              width: 160,
-              height: 184,
-              margin: '30px auto',
+              width: 160, height: 184, margin: '30px auto',
               clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
-              background: mining
-                ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-                : 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              userSelect: 'none',
-              fontWeight: 'bold',
-              color: '#fff',
-              fontSize: 18,
-              transition: 'transform 0.1s',
-              transform: mining ? 'scale(0.95)' : 'scale(1)',
+              background: mining ? '#d97706' : '#f59e0b',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', fontWeight: 'bold', color: '#fff', fontSize: 18,
             }}
           >
             {mining ? 'Mining...' : 'TAP'}
           </div>
+
+          <pre style={{ fontSize: 11, textAlign: 'left', background: '#eee', padding: 10, whiteSpace: 'pre-wrap' }}>
+            {debug}
+          </pre>
         </>
       )}
     </div>
