@@ -1,12 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { autoConnect } from '@unicitylabs/sphere-sdk/connect/browser';
 import { SPHERE_NETWORKS } from '@unicitylabs/sphere-sdk/connect';
 
 const WALLET_URL = 'https://sphere.unicity.network';
 const UCT_COIN_ID = 'f581d30f593e4b369d684a4563b5246f07b1d265f7178a2c0a82b81f39c24dc0';
 const UCT_DECIMALS = 18;
-const MINT_AMOUNT = '1000000000000000000'; // 1 UCT per tap
+const MINT_AMOUNT = '1000000000000000000';
 const COOLDOWN_MS = 1500;
+
+const TILES = [
+  { id: 0, offset: 0 },
+  { id: 1, offset: 1 },
+  { id: 2, offset: 0 },
+  { id: 3, offset: 1 },
+  { id: 4, offset: 0 },
+];
+
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch (e) {
+    // audio not available — ignore
+  }
+}
 
 function App() {
   const [status, setStatus] = useState('Not connected');
@@ -14,11 +41,10 @@ function App() {
   const [client, setClient] = useState(null);
   const [taps, setTaps] = useState(0);
   const [balance, setBalance] = useState(null);
-  const [mining, setMining] = useState(false);
-  const [cooldown, setCooldown] = useState(false);
-  const [burst, setBurst] = useState(false);
+  const [tileState, setTileState] = useState({}); // { [id]: 'mining' | 'cooldown' | undefined }
+  const [burstTile, setBurstTile] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
-  const cooldownTimer = useRef(null);
+  const cooldownTimers = useRef({});
 
   async function connectWallet() {
     setStatus('Connecting...');
@@ -54,9 +80,9 @@ function App() {
     }
   }
 
-  async function mineTap() {
-    if (!client || mining || cooldown) return;
-    setMining(true);
+  async function mineTap(tileId) {
+    if (!client || tileState[tileId]) return;
+    setTileState((s) => ({ ...s, [tileId]: 'mining' }));
     try {
       await client.intent('mint', { coinId: UCT_COIN_ID, amount: MINT_AMOUNT });
       const newTaps = taps + 1;
@@ -64,36 +90,29 @@ function App() {
       await refreshBalance(client);
       setStatus('Connected ✅');
 
-      // visual burst
-      setBurst(true);
-      setTimeout(() => setBurst(false), 300);
+      playDing();
+      setBurstTile(tileId);
+      setTimeout(() => setBurstTile(null), 300);
 
-      // update local session leaderboard
       setLeaderboard((prev) => {
         const short = address.slice(0, 18) + '...';
         const others = prev.filter((p) => p.name !== short);
         return [...others, { name: short, taps: newTaps }].sort((a, b) => b.taps - a.taps);
       });
 
-      // cooldown to prevent spam-clicking
-      setCooldown(true);
-      cooldownTimer.current = setTimeout(() => setCooldown(false), COOLDOWN_MS);
+      setTileState((s) => ({ ...s, [tileId]: 'cooldown' }));
+      cooldownTimers.current[tileId] = setTimeout(() => {
+        setTileState((s) => ({ ...s, [tileId]: undefined }));
+      }, COOLDOWN_MS);
     } catch (err) {
       console.error(err);
       setStatus('Mint failed: ' + err.message);
-    } finally {
-      setMining(false);
+      setTileState((s) => ({ ...s, [tileId]: undefined }));
     }
   }
 
-  useEffect(() => {
-    return () => clearTimeout(cooldownTimer.current);
-  }, []);
-
   const uctDisplay =
     balance !== null ? (Number(balance) / 10 ** UCT_DECIMALS).toFixed(4) + ' UCT' : '...';
-
-  const hexLabel = mining ? 'Mining...' : cooldown ? 'Cooling down' : 'TAP';
 
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center', background: '#111', color: '#fff', minHeight: '100vh' }}>
@@ -113,44 +132,60 @@ function App() {
           <p style={{ fontSize: 22, fontWeight: 'bold' }}>{uctDisplay}</p>
           <p style={{ color: '#aaa' }}>Taps mined: {taps}</p>
 
-          <div style={{ position: 'relative', width: 180, height: 208, margin: '30px auto' }}>
-            {burst && (
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: -20,
-                  borderRadius: '50%',
-                  background: 'radial-gradient(circle, rgba(245,158,11,0.5) 0%, transparent 70%)',
-                  animation: 'pulse 0.3s ease-out',
-                  pointerEvents: 'none',
-                }}
-              />
-            )}
-            <div
-              onClick={mineTap}
-              style={{
-                width: 180,
-                height: 208,
-                clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
-                background: mining
-                  ? '#d97706'
-                  : cooldown
-                  ? '#7c5a1e'
-                  : 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: cooldown ? 'not-allowed' : 'pointer',
-                userSelect: 'none',
-                fontWeight: 'bold',
-                color: '#fff',
-                fontSize: 18,
-                transition: 'transform 0.1s, background 0.2s',
-                transform: mining ? 'scale(0.95)' : 'scale(1)',
-              }}
-            >
-              {hexLabel}
-            </div>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, margin: '30px auto', flexWrap: 'wrap', maxWidth: 420 }}>
+            {TILES.map((tile) => {
+              const state = tileState[tile.id];
+              return (
+                <div
+                  key={tile.id}
+                  style={{
+                    position: 'relative',
+                    width: 90,
+                    height: 104,
+                    marginTop: tile.offset ? 52 : 0,
+                  }}
+                >
+                  {burstTile === tile.id && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: -14,
+                        borderRadius: '50%',
+                        background: 'radial-gradient(circle, rgba(245,158,11,0.5) 0%, transparent 70%)',
+                        animation: 'pulse 0.3s ease-out',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
+                  <div
+                    onClick={() => mineTap(tile.id)}
+                    style={{
+                      width: 90,
+                      height: 104,
+                      clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)',
+                      background:
+                        state === 'mining'
+                          ? '#d97706'
+                          : state === 'cooldown'
+                          ? '#7c5a1e'
+                          : 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: state ? 'not-allowed' : 'pointer',
+                      userSelect: 'none',
+                      fontWeight: 'bold',
+                      color: '#fff',
+                      fontSize: 12,
+                      transition: 'transform 0.1s, background 0.2s',
+                      transform: state === 'mining' ? 'scale(0.92)' : 'scale(1)',
+                    }}
+                  >
+                    {state === 'mining' ? '...' : state === 'cooldown' ? '⏳' : 'TAP'}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {leaderboard.length > 0 && (
