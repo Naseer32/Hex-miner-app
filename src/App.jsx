@@ -5,7 +5,8 @@ import { SPHERE_NETWORKS } from '@unicitylabs/sphere-sdk/connect';
 const WALLET_URL = 'https://sphere.unicity.network';
 const UCT_COIN_ID = 'f581d30f593e4b369d684a4563b5246f07b1d265f7178a2c0a82b81f39c24dc0';
 const UCT_DECIMALS = 18;
-const MINT_AMOUNT = '1000000000000000000';
+const MINT_AMOUNT = '1000000000000000000'; // 1 UCT
+const RAID_AMOUNT = '500000000000000000'; // 0.5 UCT
 const COOLDOWN_MS = 1500;
 
 const TILES = [
@@ -16,14 +17,14 @@ const TILES = [
   { id: 4, offset: 0 },
 ];
 
-function playDing() {
+function playDing(freqStart = 880, freqEnd = 1320) {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+    osc.frequency.setValueAtTime(freqStart, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(freqEnd, ctx.currentTime + 0.08);
     gain.gain.setValueAtTime(0.15, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
     osc.connect(gain);
@@ -42,6 +43,11 @@ function App() {
   const [tileState, setTileState] = useState({});
   const [burstTile, setBurstTile] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [raidTarget, setRaidTarget] = useState('');
+  const [raiding, setRaiding] = useState(false);
+  const [raidsSent, setRaidsSent] = useState(0);
+  const [raidsReceived, setRaidsReceived] = useState(0);
+  const [incomingFlash, setIncomingFlash] = useState(false);
   const cooldownTimers = useRef({});
   const clientRef = useRef(null);
 
@@ -51,12 +57,12 @@ function App() {
       const result = await autoConnect({
         dapp: {
           name: 'Hex Miner',
-          description: 'Tap to mine hex tiles on Unicity testnet',
+          description: 'Tap to mine hex tiles, raid other players on Unicity testnet',
           url: window.location.origin,
         },
         walletUrl: WALLET_URL,
         network: SPHERE_NETWORKS.testnet2,
-        permissions: ['identity:read', 'balance:read', 'mint:request'],
+        permissions: ['identity:read', 'balance:read', 'mint:request', 'send:request'],
       });
 
       clientRef.current = result.client;
@@ -65,7 +71,6 @@ function App() {
       setStatus('Connected ✅');
       refreshBalance(result.client);
 
-      // React to the wallet locking — the connection is no longer usable
       result.client.on('wallet:locked', () => {
         setStatus('Wallet locked — please reconnect');
         setClient(null);
@@ -74,13 +79,23 @@ function App() {
         setBalance(null);
       });
 
-      // React to the user switching accounts inside the wallet
       result.client.on('identity:changed', (newIdentity) => {
         setAddress(newIdentity.directAddress);
         setStatus('Account switched ✅');
         setTaps(0);
         setLeaderboard([]);
         refreshBalance(result.client);
+      });
+
+      // Someone raided US — a real incoming peer-to-peer transfer
+      result.client.on('transfer:incoming', (transfer) => {
+        if (transfer.coinId === UCT_COIN_ID) {
+          setRaidsReceived((r) => r + 1);
+          setIncomingFlash(true);
+          playDing(440, 220); // lower "incoming" tone, distinct from mint chime
+          setTimeout(() => setIncomingFlash(false), 600);
+          refreshBalance(result.client);
+        }
       });
     } catch (err) {
       console.error(err);
@@ -129,6 +144,28 @@ function App() {
     }
   }
 
+  async function sendRaid() {
+    if (!client || !raidTarget.trim() || raiding) return;
+    setRaiding(true);
+    setStatus('Sending raid...');
+    try {
+      await client.intent('send', {
+        recipient: raidTarget.trim(),
+        coinId: UCT_COIN_ID,
+        amount: RAID_AMOUNT,
+      });
+      setRaidsSent((r) => r + 1);
+      await refreshBalance(client);
+      setStatus('Raid sent ⚔️');
+      setRaidTarget('');
+    } catch (err) {
+      console.error(err);
+      setStatus('Raid failed: ' + err.message);
+    } finally {
+      setRaiding(false);
+    }
+  }
+
   useEffect(() => {
     return () => {
       Object.values(cooldownTimers.current).forEach(clearTimeout);
@@ -139,7 +176,17 @@ function App() {
     balance !== null ? (Number(balance) / 10 ** UCT_DECIMALS).toFixed(4) + ' UCT' : '...';
 
   return (
-    <div style={{ padding: 40, fontFamily: 'sans-serif', textAlign: 'center', background: '#111', color: '#fff', minHeight: '100vh' }}>
+    <div
+      style={{
+        padding: 40,
+        fontFamily: 'sans-serif',
+        textAlign: 'center',
+        background: incomingFlash ? '#3a1a1a' : '#111',
+        color: '#fff',
+        minHeight: '100vh',
+        transition: 'background 0.3s',
+      }}
+    >
       <h1 style={{ letterSpacing: 1 }}>⬡ Hex Miner</h1>
       <p style={{ color: '#aaa' }}>Status: {status}</p>
 
@@ -154,7 +201,9 @@ function App() {
         <>
           <p style={{ fontSize: 12, wordBreak: 'break-all', color: '#666' }}>{address}</p>
           <p style={{ fontSize: 22, fontWeight: 'bold' }}>{uctDisplay}</p>
-          <p style={{ color: '#aaa' }}>Taps mined: {taps}</p>
+          <p style={{ color: '#aaa' }}>
+            Mined: {taps} · Raids sent: {raidsSent} · Raids received: {raidsReceived}
+          </p>
 
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, margin: '30px auto', flexWrap: 'wrap', maxWidth: 420 }}>
             {TILES.map((tile) => {
@@ -182,6 +231,31 @@ function App() {
                 </div>
               );
             })}
+          </div>
+
+          <div style={{ maxWidth: 320, margin: '30px auto', padding: 16, background: '#1a1a1a', borderRadius: 12, border: '1px solid #333' }}>
+            <h3 style={{ color: '#f59e0b', marginTop: 0 }}>⚔️ Raid a player</h3>
+            <p style={{ fontSize: 12, color: '#888' }}>
+              Send 0.5 UCT directly, peer-to-peer, straight to their wallet.
+            </p>
+            <input
+              type="text"
+              value={raidTarget}
+              onChange={(e) => setRaidTarget(e.target.value)}
+              placeholder="DIRECT://... or @nametag"
+              style={{ width: '100%', padding: 10, borderRadius: 6, border: '1px solid #444', background: '#000', color: '#fff', boxSizing: 'border-box', fontSize: 12 }}
+            />
+            <button
+              onClick={sendRaid}
+              disabled={raiding || !raidTarget.trim()}
+              style={{
+                marginTop: 10, width: '100%', padding: 10, borderRadius: 6, border: 'none',
+                background: raiding ? '#555' : '#dc2626', color: '#fff', fontWeight: 'bold',
+                cursor: raiding ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {raiding ? 'Sending...' : 'Raid'}
+            </button>
           </div>
 
           {leaderboard.length > 0 && (
