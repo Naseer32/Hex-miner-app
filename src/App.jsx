@@ -68,6 +68,12 @@ function App() {
       clientRef.current = result.client;
       setClient(result.client);
       setAddress(result.connection.identity.directAddress);
+      setStatus('Connected! Signing...');
+await result.client.intent('sign_message', {
+  message: `Sign in to Hex Miner at ${new Date().toISOString()}`,
+});
+setStatus('Connected ✅');
+refreshBalance(result.client);
       setStatus('Connected ✅');
       refreshBalance(result.client);
 
